@@ -1,0 +1,18 @@
+dependencies:
+  hayschan/autopid_for_esp_idf:
+    component_hash: abb01ee57353d22df70c27840ddec00b90544540c9a78ec18932737d7fbb7878
+    dependencies: []
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.0.2
+  idf:
+    source:
+      type: idf
+    version: 5.3.1
+direct_dependencies:
+- hayschan/autopid_for_esp_idf
+- idf
+manifest_hash: d016c05e11ba2bbe1dfb55a4ab39f0890fbf931e0b3d5c7bf4355bedf27e0014
+target: esp32
+version: 2.0.0

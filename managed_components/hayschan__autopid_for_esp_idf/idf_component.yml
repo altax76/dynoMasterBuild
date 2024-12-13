@@ -1,0 +1,11 @@
+description: A PID controller library for ESP-IDF
+documentation: https://github.com/hayschan/AutoPID-for-ESP-IDF/tree/main/README.md
+issues: https://github.com/hayschan/AutoPID-for-ESP-IDF/issues
+maintainers:
+- Hays Chan <blog@haysc.tech>
+repository: git://github.com/BrandonElectronic/AutoPID-for-ESP-IDF.git
+repository_info:
+  commit_sha: 57f121eca7b35efaf2b1404ecbe7bd2c314a4810
+  path: .
+url: https://github.com/hayschan/AutoPID-for-ESP-IDF
+version: 1.0.2

@@ -1,0 +1,7 @@
+menu "AutoPID Configuration"
+    depends on COMPONENT_AUTO_PID
+
+config AUTO_PID_ENABLED
+    bool "Enable AutoPID Component"
+    default y
+endmenu
