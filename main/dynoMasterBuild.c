@@ -14,6 +14,8 @@
 #include <math.h>
 
 
+
+
 #define LED_GPIO_PIN GPIO_NUM_2
 
 //#define REFRESH_RATE_MS 100                 // this should not be used in the final program
@@ -27,8 +29,8 @@
 //#define FILTER_LENGTH 10            // Filter length in clock cycles (1ms debounce)
 #define FILTER_LENGTH 100
 
-#define HX711_DOUT_PIN  GPIO_NUM_33  // Change to GPIO16
-#define HX711_SCK_PIN   GPIO_NUM_32 // Change to GPIO17
+#define HX711_DOUT_PIN  GPIO_NUM_33 
+#define HX711_SCK_PIN   GPIO_NUM_32 
 
 int64_t current_time;
 double delta_t;
@@ -170,13 +172,12 @@ void serial_output_task(void *arg) {
 
         //This is turned on in steady state tuning and sends, the current time, rpm, raw strain, unfiltered PID output, and filtered PID output
         if (requested_data) {
-            //printf("s%f %d %d %d %d a0:%f a1:%f a2:%f b0:%f b1:%f b2:%f Ok:%f Ok-1:%f Ok-2:%f Ik:%f Ik-1:%f Ik-2:%f\n", ((double)current_rpm_time_stamp/1000000), (int)current_rpm, strain_value, (int)Ok, (int)pau_output,a0,a1,a2,b0,b1,b2,Ok,Ok1,Ok2,Ik,Ik1,Ik2);
-            printf("s%f %d %d %d %d\n", ((double)current_rpm_time_stamp/1000000), (int)current_rpm, strain_value, (int)Ok, (int)pau_output);
+            printf("s%f %d %d %d %d %d\n", ((double)current_rpm_time_stamp/1000000), (int)current_rpm, strain_value, (int)Ok, (int)pau_output, (int)target_rpm);
             requested_data = false;
         }
         if (rpm_state) {
             if (previous_rpm_time_stamp != current_rpm_time_stamp) {                                //check if there has been a new rpm value sent, so that repeated values are not sent.
-                printf("s%f %f\n", (double)current_rpm, ((double)current_rpm_time_stamp/1000000));     // send the current rpm, and time stamp
+                printf("s%f %f\n", (double)current_rpm, ((double)current_rpm_time_stamp/1`00000));     // send the current rpm, and time stamp
             }  
             previous_rpm_time_stamp = current_rpm_time_stamp;                                       // reset the check for repeats
         }
