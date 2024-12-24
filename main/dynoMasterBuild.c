@@ -12,7 +12,8 @@
 #include "driver/ledc.h"
 #include "driver/timer.h"
 #include <math.h>
-
+#include <stdint.h>
+#include "driver/twai.h"
 
 
 
@@ -44,7 +45,7 @@ char serial_input[100] = "";
 
 volatile int strain_value = 0;
 
-int brake_voltage = 60; //voltage set to 0 until calibrated
+int brake_voltage = 60; 
 
 bool test_state = false;
 bool measure_test_state = false;
@@ -89,6 +90,14 @@ float eOutput = 79; //set to 79 to apply 1.02v to pau
 volatile double pau_emergency_voltage = 0;
 
 bool requested_data = false;
+
+double strain_gauge_slope = 0;
+double strain_gauge_intercept = 999;
+
+bool updatedStrainCal = 0;
+
+uint16_t engineRPM = 0;
+uint16_t TPS = 0;
 
 
 //this was just made to simplify code, it really doesnt need to be in here.
@@ -172,15 +181,21 @@ void serial_output_task(void *arg) {
 
         //This is turned on in steady state tuning and sends, the current time, rpm, raw strain, unfiltered PID output, and filtered PID output
         if (requested_data) {
-            printf("s%f %d %d %d %d %d\n", ((double)current_rpm_time_stamp/1000000), (int)current_rpm, strain_value, (int)Ok, (int)pau_output, (int)target_rpm);
+            printf("s%f %d %d %d %d %d %.1f %d\n", ((double)current_rpm_time_stamp/1000000), (int)current_rpm, strain_value, (int)Ok, (int)pau_output, (int)target_rpm,(double)TPS/10,(int)engineRPM);
             requested_data = false;
         }
         if (rpm_state) {
             if (previous_rpm_time_stamp != current_rpm_time_stamp) {                                //check if there has been a new rpm value sent, so that repeated values are not sent.
-                printf("s%f %f\n", (double)current_rpm, ((double)current_rpm_time_stamp/1`00000));     // send the current rpm, and time stamp
+                printf("s%f %f\n", (double)current_rpm, ((double)current_rpm_time_stamp/100000));     // send the current rpm, and time stamp
             }  
             previous_rpm_time_stamp = current_rpm_time_stamp;                                       // reset the check for repeats
         }
+
+        if(updatedStrainCal) {
+            //printf("strain slope: %.8f, string Intercept: %.8f", strain_gauge_slope,strain_gauge_intercept);
+            updatedStrainCal = false;
+        }
+        //printf("TPS: %.1f    Current RPM:%f\n", ((double)TPS/10),(double)engineRPM);
 
 
         vTaskDelay(pdMS_TO_TICKS(10)); // all this data is send every 10ms
@@ -326,6 +341,21 @@ void serial_input_task(void *pvParameters) {
                 apply_brake_state = false;
             }
 
+            if (check_string_start(serial_input,"strainCal")){
+                updatedStrainCal = true;
+                remove_prefix(serial_input,"strainCal");
+                char *token = strtok(serial_input, " ");
+                if (token != NULL) {
+                    strain_gauge_slope = atof(token);
+                    token = strtok(NULL, " ");
+                }
+                if (token != NULL) {
+                    strain_gauge_intercept = atof(token);
+                    token = strtok(NULL, " ");
+                }
+            }
+
+
         }
         vTaskDelay(pdMS_TO_TICKS(100)); //this tas is run every 100ms
     }
@@ -354,8 +384,6 @@ gpio_config_t io_conf = {
         if(pau_test_state) {
             //gpio_set_level(LED_GPIO_PIN, 1);
             double target_ramp = current_rpm-(current_rpm-target_rpm)*ramp; //target_ramp is the target set by the user time a ramp factor so that when a new target is set, the pid algorithm has a second of ramping before applying the full load to the car
-
-            
 
             Ik2 = Ik1;                                                      //The error at t-2 is equal to the error at t-1
             Ik1 = Ik;                                                       //The error at t-1 is equal to the current error
@@ -467,6 +495,146 @@ void hx711_task(void *pvParameter) {
 
 
 
+// Function to split a 16-bit value into two bytes
+void set_torque_output(double value, uint8_t* high_byte, uint8_t* low_byte) {
+    int16_t integer = (int16_t)(value*10);
+    *high_byte = (integer >> 8) & 0xFF; // Extract the most significant byte
+    *low_byte = integer & 0xFF;         // Extract the least significant byte
+}
+
+void set_dynoRPM_output(double value, uint8_t* high_byte1, uint8_t* low_byte1) {
+    int16_t integer = (int16_t)(value*10);
+    *high_byte1 = (integer >> 8) & 0xFF; // Extract the most significant byte
+    *low_byte1 = integer & 0xFF;         // Extract the least significant byte
+}
+
+// Task to handle TWAI communication
+void twai_task(void* pvParameters) {
+    // Configure TWAI
+    twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT(GPIO_NUM_22, GPIO_NUM_23, TWAI_MODE_NORMAL);
+    twai_timing_config_t t_config = TWAI_TIMING_CONFIG_1MBITS();
+    twai_filter_config_t f_config = TWAI_FILTER_CONFIG_ACCEPT_ALL();
+    g_config.alerts_enabled = TWAI_ALERT_ALL;
+
+    if (twai_driver_install(&g_config, &t_config, &f_config) == ESP_OK) {
+        //printf("TWAI driver installed\n");
+    } else {
+        //printf("Failed to install TWAI driver\n");
+        vTaskDelete(NULL); // End task
+        return;
+    }
+
+    if (twai_start() == ESP_OK) {
+        //printf("TWAI driver started\n");
+    } else {
+        //printf("Failed to start TWAI driver\n");
+        twai_driver_uninstall();
+        vTaskDelete(NULL); // End task
+        return;
+    }
+
+    uint8_t high_byte = 0;
+    uint8_t low_byte = 0;
+    uint8_t high_byte1 = 0;
+    uint8_t low_byte1 = 0;
+
+    double torque_output = (double)strain_value*strain_gauge_slope+strain_gauge_intercept;
+    
+    torque_output = ((int)((torque_output * 10) + 0.5)) / 10.0;
+
+    set_torque_output(torque_output, &high_byte, &low_byte);
+
+    while (true) {
+
+        double torque_output = (double)strain_value*strain_gauge_slope+strain_gauge_intercept;
+    
+        torque_output = ((int)((torque_output * 10) + 0.5)) / 10.0;
+        
+
+        set_torque_output(torque_output, &high_byte, &low_byte);
+        set_dynoRPM_output(current_rpm,&high_byte1,&low_byte1);
+
+        // Create and transmit a message
+        twai_message_t tx_message = {
+            .identifier = 0x7F1,
+            .data_length_code = 8,
+            .data = {high_byte, low_byte, high_byte1, low_byte1, 0b00110011, 0b01010101, 0b01111000, 0b10000001}
+        };
+
+        // Try to transmit the message
+        esp_err_t tx_result = twai_transmit(&tx_message, pdMS_TO_TICKS(100));
+
+        if (tx_result == ESP_OK) {
+            //printf("Message sent successfully\n");
+        } else if (tx_result == ESP_ERR_TIMEOUT) {
+            //printf("Message transmission timed out\n");
+        } else if (tx_result == ESP_ERR_INVALID_STATE) {
+            //printf("TWAI driver is in an invalid state, resetting...\n");
+            twai_stop();  // Stop the driver
+            twai_driver_uninstall();  // Uninstall driver
+            vTaskDelay(pdMS_TO_TICKS(10));  // Wait longer to stabilize
+            if (twai_driver_install(&g_config, &t_config, &f_config) == ESP_OK) {
+                //printf("TWAI driver reinstalled\n");
+            } else {
+                //printf("Failed to reinstall TWAI driver\n");
+                vTaskDelete(NULL); // End task
+                return;
+            }
+            if (twai_start() != ESP_OK) {
+                //printf("Failed to restart TWAI driver\n");
+                vTaskDelete(NULL); // End task
+                return;
+            }
+            //printf("TWAI driver restarted\n");
+        } else {
+            //printf("Failed to send message with error code: %d\n", result);
+        }
+
+        twai_message_t rx_message;
+esp_err_t rx_result = twai_receive(&rx_message, pdMS_TO_TICKS(100));
+
+if (rx_result == ESP_OK) {
+    // Check for frame with ID 0x640
+    if (rx_message.identifier == 0x640 && rx_message.data_length_code >= 7) {
+        // Extract engine RPM (data[0] and data[1])
+        engineRPM = (rx_message.data[0] << 8) | rx_message.data[1];
+        
+        // Extract TPS (data[6] and data[7])
+        TPS = (rx_message.data[6] << 8) | rx_message.data[7];
+        
+        // Process the values as needed
+        // printf("TPS: %.1f    Current RPM: %f\n", ((double)TPS / 10), (double)engineRPM);
+    }
+} else if (rx_result == ESP_ERR_TIMEOUT) {
+    //printf("Message reception timed out\n");
+} else if (rx_result == ESP_ERR_INVALID_STATE) {
+    //printf("TWAI driver is in an invalid state, resetting...\n");
+    twai_stop();  // Stop the driver
+    twai_driver_uninstall();  // Uninstall driver
+    vTaskDelay(pdMS_TO_TICKS(10));  // Wait longer to stabilize
+    if (twai_driver_install(&g_config, &t_config, &f_config) == ESP_OK) {
+        //printf("TWAI driver reinstalled\n");
+    } else {
+        //printf("Failed to reinstall TWAI driver\n");
+        vTaskDelete(NULL); // End task
+        return;
+    }
+    if (twai_start() != ESP_OK) {
+        //printf("Failed to restart TWAI driver\n");
+        vTaskDelete(NULL); // End task
+        return;
+    }
+    //printf("TWAI driver restarted\n");
+} else {
+    //printf("Failed to receive message with error code: %d\n", result);
+}
+
+
+        vTaskDelay(pdMS_TO_TICKS(100)); // Delay between transmissions
+    }
+}
+
+
 
 void app_main(void) {
     pcnt_example_init();
@@ -479,4 +647,6 @@ void app_main(void) {
     xTaskCreate(PAUOutput, "PAUOutput", 2048, NULL, 5, NULL);
 
     xTaskCreate(&hx711_task, "hx711_task", 2048, NULL, 5, NULL);
+
+    xTaskCreate(twai_task, "twai_task", 4096, NULL, 5, NULL);
 }
